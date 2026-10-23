@@ -1,0 +1,70 @@
+name: Sync upstream
+
+# Merges upstream (khabaznak/htmx-skills) into a sync branch, regenerates the
+# committed agent skills (skills/<name>/SKILL.md), and opens a PR.
+# Runs weekly and on demand (Actions -> Sync upstream -> Run workflow).
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/khabaznak/htmx-skills.git
+          git fetch upstream main
+
+      - name: Check if already up to date
+        id: uptodate
+        run: |
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge upstream into sync branch
+        if: steps.uptodate.outputs.uptodate != 'true'
+        id: merge
+        run: |
+          branch="sync/upstream-$(date +%Y%m%d%H%M)"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          if ! git merge --no-edit upstream/main; then
+            git merge --abort
+            echo "::error::Merge conflict syncing upstream. Sync manually: git fetch https://github.com/khabaznak/htmx-skills.git main && git merge FETCH_HEAD, resolve conflicts, then run adapters/agent-skills/build.py"
+            exit 1
+          fi
+
+      - name: Regenerate agent skills
+        if: steps.uptodate.outputs.uptodate != 'true'
+        run: |
+          python3 adapters/agent-skills/build.py
+          git add skills/
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: regenerate agent skills after upstream sync"
+          fi
+
+      - name: Push and open PR
+        if: steps.uptodate.outputs.uptodate != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git push origin "${{ steps.merge.outputs.branch }}"
+          gh pr create \
+            --base main \
+            --head "${{ steps.merge.outputs.branch }}" \
+            --title "chore: sync upstream (khabaznak/htmx-skills)" \
+            --body "Automated upstream sync. Merges the latest \`khabaznak/htmx-skills@main\` and regenerates the committed \`skills/<name>/SKILL.md\` files. Review the merge, then merge as a merge commit or squash — either is fine."
