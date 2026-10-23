@@ -1,0 +1,27 @@
+name: Check generated skills
+
+# Verifies that the committed skills/<name>/SKILL.md files match what
+# adapters/agent-skills/build.py produces from the canonical skills/*.md.
+
+on:
+  pull_request:
+    paths:
+      - "skills/**"
+      - "adapters/agent-skills/**"
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regenerate agent skills
+        run: python3 adapters/agent-skills/build.py
+
+      - name: Verify generated skills are committed and fresh
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::skills/<name>/SKILL.md files are stale. Run 'python3 adapters/agent-skills/build.py' and commit the result."
+            exit 1
+          fi
